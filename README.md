@@ -2,3 +2,5 @@
 The materials in this repository accompany the CUDA Training Series presented at ORNL and NERSC.
 
 You can find the slides and presentation recordings at https://www.olcf.ornl.gov/cuda-training-series/
+
+I completed this course using CUDA Toolkit 13.2.
