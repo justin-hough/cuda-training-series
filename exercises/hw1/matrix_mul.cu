@@ -18,20 +18,29 @@
 
 
 const int DSIZE = 4096;
-const int block_size = 16;  // CUDA maximum is 1024 *total* threads in block
+const int block_size = 32;  // CUDA maximum is 1024 *total* threads in block
 const float A_val = 1.0f;
 const float B_val = 2.0f;
 
 // matrix multiply (naive) kernel: C = A * B
 __global__ void mmul(const float *A, const float *B, float *C, int ds) {
 
-  int idx = threadIdx.x+blockDim.x*blockIdx.x; // create thread x index
-  int idy = threadIdx.y+blockDim.y*blockIdx.y; // create thread y index
+  // We can use the x index to index the matrix's column and y for the row
+  // (this is convention)
+  int idx = threadIdx.x + blockDim.x * blockIdx.x; // create thread x index
+  int idy = threadIdx.y + blockDim.y * blockIdx.y; // create thread y index
 
-  if ((idx < ds) && (idy < ds)){
+  // Each mmul thread calculates the output matrix C's value
+  // at (row, column) = (idy, idx). The output is equal to
+  // the dot product of A's rows and B's columns (which have length ds).
+  // Therefore, we loop ds number of times, adding the products to temp.
+  if ((idx < ds) && (idy < ds)){ // The output matrix also has dimension ds x ds
     float temp = 0;
     for (int i = 0; i < ds; i++)
-      temp += A[FIXME*ds+i] * B[i*ds+FIXME];   // dot product of row and column
+      // A, B and C are all flattened arrays, stored **row-major**
+      // (i.e. the values of row 0, followed by the values of row 1, etc.).
+      // Therefore, we must account for this when indexing into A, B, and C
+      temp += A[idy*ds+i] * B[i*ds+idx];   // dot product of row and column
     C[idy*ds+idx] = temp;
   }
 }
@@ -77,6 +86,7 @@ int main(){
   dim3 grid((DSIZE+block.x-1)/block.x, (DSIZE+block.y-1)/block.y);
   mmul<<<grid, block>>>(d_A, d_B, d_C, DSIZE);
   cudaCheckErrors("kernel launch failure");
+  cudaDeviceSynchronize();
 
   // Cuda processing sequence step 2 is complete
 
