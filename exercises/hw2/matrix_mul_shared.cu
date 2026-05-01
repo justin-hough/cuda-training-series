@@ -22,30 +22,61 @@ const int block_size = 32;  // CUDA maximum is 1024 *total* threads in block
 const float A_val = 3.0f;
 const float B_val = 2.0f;
 
-// matrix multiply (naive) kernel: C = A * B
+// matrix multiply kernel: C = A * B
 __global__ void mmul(const float *A, const float *B, float *C, int ds) {
+  // - The input matrices A and B have been flattened into row-major arrays
+  //   (i.e. the values of row 0, followed by the values of row 1, etc.).
+  //   The output matrix C will be written in the same format.
+  // - ds is the dimension of the matrices (all are square)
 
   // declare cache in shared memory
   __shared__ float As[block_size][block_size];
   __shared__ float Bs[block_size][block_size];
 
+  // Each thread will compute a single output element
+  // We can use the x index to define the output element's column and y for its row
+  // (this is convention)
   int idx = threadIdx.x+blockDim.x*blockIdx.x; // create thread x index
   int idy = threadIdx.y+blockDim.y*blockIdx.y; // create thread y index
 
+  // The approach from week 1 involved repeatedly reading the same elements from
+  // global memory. The below approach uses shared memory to reuse the same data
+  // across the threads within a block. Specifically, we load a small square tile
+  // of A and B into shared memory, use it fully, then move on to the next tile.  
   if ((idx < ds) && (idy < ds)){
     float temp = 0;
+
+    // Loop over all of the tiles (assumes ds is perfectly divisible by tile size)
+    // Each tile has dimension block_size*block_size (i.e. one element for every
+    // thread in the block).
     for (int i = 0; i < ds/block_size; i++) {
 
-      // Load data into shared memory
-      As[threadIdx.y][threadIdx.x] = A[FIXME];
-      Bs[threadIdx.y][threadIdx.x] = B[FIXME];
+      // Every iteration of this loop loads a new 32x32 tile of A and 32x32 tile of B.
+      // (remember threadIdx.x and .y range from 0 to block_size-1)
+      //
+      // Each iteration, the A tile moves RIGHT, whilst the B tile moves DOWN
+      // For A:
+      //    - idy*ds:           goes to the row this thread is responsible for
+      //    - (i * block_size): moves horizontal to the start of the current tile
+      //    - threadIdx.x:      moves horizontal to the local column this thread is responsible for
+      // For B:
+      //    - (i * block_size)*ds:  moves down to the start of the current tile
+      //    - threadIdx.y*ds:       goes to the local row this thread is responsible for
+      //    - idx:                  moves horizontal to the column this thread is responsible for
+      As[threadIdx.y][threadIdx.x] = A[idy*ds + (i * block_size) + threadIdx.x];
+      Bs[threadIdx.y][threadIdx.x] = B[((i * block_size) + threadIdx.y)*ds + idx];
 
-      // Synchronize
+      // Synchronise, i.e. wait for the 32x32=1024 separate threads to have loaded
+      // their elements into the shared memory so that the tiles are ready to use.
       __syncthreads();
 
-      // Keep track of the running sum
+      // Perform the dot product of row (from A) and column (from B) FOR THIS TILE,
+      // keeping track of the running sum.
       for (int k = 0; k < block_size; k++)
-      	temp += As[FIXME][FIXME] * Bs[FIXME][FIXME]; // dot product of row and column
+      	temp += As[threadIdx.y][k] * Bs[k][threadIdx.x]; // dot product of row and column
+
+      // Synchronise, i.e. wait for the threads to complete their calculations, so that
+      // the shared memory is not overwritten too early
       __syncthreads();
 
     }
